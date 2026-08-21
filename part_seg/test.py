@@ -117,7 +117,11 @@ def load_pts_seg_files(pts_file, seg_file, catid):
         pts = np.array([np.float32(s.split()) for s in pts_str], dtype=np.float32)
     with open(seg_file, 'r') as f:
         part_ids = np.array([int(item.rstrip()) for item in f.readlines()], dtype=np.uint8)
-        seg = np.array([cpid2oid[catid+'_'+str(x)] for x in part_ids])
+        # The supplied raw ShapeNetPart annotations use 1-based part ids,
+        # whereas the HDF5 mapping used by the model is 0-based. Detect this
+        # layout per file so both conventions remain supported.
+        offset = 1 if part_ids.size and part_ids.min() >= 1 and catid + '_0' in cpid2oid else 0
+        seg = np.array([cpid2oid[catid+'_'+str(int(x) - offset)] for x in part_ids])
     return pts, seg
 
 def pc_augment_to_point_num(pts, pn):
