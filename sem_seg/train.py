@@ -2,7 +2,8 @@ import argparse
 import math
 import h5py
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import socket
 
 import os
@@ -268,7 +269,11 @@ def eval_one_epoch(sess, ops, test_writer):
             
     log_string('eval mean loss: %f' % (loss_sum / float(total_seen/NUM_POINT)))
     log_string('eval accuracy: %f'% (total_correct / float(total_seen)))
-    log_string('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float))))
+    seen_class = np.asarray(total_seen_class, dtype=np.float64)
+    correct_class = np.asarray(total_correct_class, dtype=np.float64)
+    class_accuracy = np.divide(correct_class, seen_class,
+                               out=np.zeros_like(correct_class), where=seen_class != 0)
+    log_string('eval avg class acc: %f' % np.mean(class_accuracy))
          
 
 

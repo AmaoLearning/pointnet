@@ -1,4 +1,5 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import numpy as np
 import math
 import os
@@ -13,8 +14,7 @@ def get_transform_K(inputs, is_training, bn_decay=None, K = 3):
     """ Transform Net, input is BxNx1xK gray image
         Return:
             Transformation matrix of size KxK """
-    batch_size = inputs.get_shape()[0].value
-    num_point = inputs.get_shape()[1].value
+    batch_size, num_point = inputs.get_shape().as_list()[:2]
 
     net = tf_util.conv2d(inputs, 256, [1,1], padding='VALID', stride=[1,1],
                          bn=True, is_training=is_training, scope='tconv1', bn_decay=bn_decay)
@@ -44,8 +44,7 @@ def get_transform(point_cloud, is_training, bn_decay=None, K = 3):
     """ Transform Net, input is BxNx3 gray image
         Return:
             Transformation matrix of size 3xK """
-    batch_size = point_cloud.get_shape()[0].value
-    num_point = point_cloud.get_shape()[1].value
+    batch_size, num_point = point_cloud.get_shape().as_list()[:2]
 
     input_image = tf.expand_dims(point_cloud, -1)
     net = tf_util.conv2d(input_image, 64, [1,3], padding='VALID', stride=[1,1],
@@ -149,7 +148,7 @@ def get_loss(l_pred, seg_pred, label, seg, weight, end_points):
     
     # Enforce the transformation as orthogonal matrix
     transform = end_points['transform'] # BxKxK
-    K = transform.get_shape()[1].value
+    K = transform.get_shape().as_list()[1]
     mat_diff = tf.matmul(transform, tf.transpose(transform, perm=[0,2,1])) - tf.constant(np.eye(K), dtype=tf.float32)
     mat_diff_loss = tf.nn.l2_loss(mat_diff) 
     
@@ -157,4 +156,3 @@ def get_loss(l_pred, seg_pred, label, seg, weight, end_points):
     total_loss = weight * seg_loss + (1 - weight) * label_loss + mat_diff_loss * 1e-3
 
     return total_loss, label_loss, per_instance_label_loss, seg_loss, per_instance_seg_loss, per_instance_seg_pred_res
-

@@ -59,7 +59,7 @@ def batch_mkdir(output_folder, subdir_list):
 # Write numpy array data and label to h5_filename
 def save_h5_data_label_normal(h5_filename, data, label, normal, 
 		data_dtype='float32', label_dtype='uint8', normal_dtype='float32'):
-    h5_fout = h5py.File(h5_filename)
+    h5_fout = h5py.File(h5_filename, 'w')
     h5_fout.create_dataset(
             'data', data=data,
             compression='gzip', compression_opts=4,
@@ -77,7 +77,7 @@ def save_h5_data_label_normal(h5_filename, data, label, normal,
 
 # Write numpy array data and label to h5_filename
 def save_h5(h5_filename, data, label, data_dtype='uint8', label_dtype='uint8'):
-    h5_fout = h5py.File(h5_filename)
+    h5_fout = h5py.File(h5_filename, 'w')
     h5_fout.create_dataset(
             'data', data=data,
             compression='gzip', compression_opts=4,
@@ -90,7 +90,7 @@ def save_h5(h5_filename, data, label, data_dtype='uint8', label_dtype='uint8'):
 
 # Read numpy array data and label from h5_filename
 def load_h5_data_label_normal(h5_filename):
-    f = h5py.File(h5_filename)
+    f = h5py.File(h5_filename, 'r')
     data = f['data'][:]
     label = f['label'][:]
     normal = f['normal'][:]
@@ -98,15 +98,15 @@ def load_h5_data_label_normal(h5_filename):
 
 # Read numpy array data and label from h5_filename
 def load_h5_data_label_seg(h5_filename):
-    f = h5py.File(h5_filename)
+    f = h5py.File(h5_filename, 'r')
     data = f['data'][:]
     label = f['label'][:]
-    seg = f['pid'][:]
+    seg = f['seg'][:]
     return (data, label, seg)
 
 # Read numpy array data and label from h5_filename
 def load_h5(h5_filename):
-    f = h5py.File(h5_filename)
+    f = h5py.File(h5_filename, 'r')
     data = f['data'][:]
     label = f['label'][:]
     return (data, label)
@@ -141,5 +141,3 @@ def pad_arr_rows(arr, row, pad='edge'):
         return np.lib.pad(arr, ((0, row-arr.shape[0]), (0, 0)), 'edge')
     if pad == 'constant':
         return np.lib.pad(arr, ((0, row-arr.shape[0]), (0, 0)), 'constant', (0, 0))
-
-

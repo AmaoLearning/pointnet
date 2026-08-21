@@ -2,7 +2,8 @@ import argparse
 import math
 import h5py
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import socket
 import importlib
 import os
@@ -26,6 +27,10 @@ parser.add_argument('--momentum', type=float, default=0.9, help='Initial learnin
 parser.add_argument('--optimizer', default='adam', help='adam or momentum [default: adam]')
 parser.add_argument('--decay_step', type=int, default=200000, help='Decay step for lr decay [default: 200000]')
 parser.add_argument('--decay_rate', type=float, default=0.7, help='Decay rate for lr decay [default: 0.8]')
+parser.add_argument('--max_train_batches', type=int, default=None,
+                    help='Optional per-file training batch limit for smoke tests')
+parser.add_argument('--max_eval_batches', type=int, default=None,
+                    help='Optional per-file evaluation batch limit for smoke tests')
 FLAGS = parser.parse_args()
 
 
@@ -38,6 +43,8 @@ MOMENTUM = FLAGS.momentum
 OPTIMIZER = FLAGS.optimizer
 DECAY_STEP = FLAGS.decay_step
 DECAY_RATE = FLAGS.decay_rate
+MAX_TRAIN_BATCHES = FLAGS.max_train_batches
+MAX_EVAL_BATCHES = FLAGS.max_eval_batches
 
 MODEL = importlib.import_module(FLAGS.model) # import network module
 MODEL_FILE = os.path.join(BASE_DIR, 'models', FLAGS.model+'.py')
@@ -185,6 +192,8 @@ def train_one_epoch(sess, ops, train_writer):
         
         file_size = current_data.shape[0]
         num_batches = file_size // BATCH_SIZE
+        if MAX_TRAIN_BATCHES is not None:
+            num_batches = min(num_batches, MAX_TRAIN_BATCHES)
         
         total_correct = 0
         total_seen = 0
@@ -230,6 +239,8 @@ def eval_one_epoch(sess, ops, test_writer):
         
         file_size = current_data.shape[0]
         num_batches = file_size // BATCH_SIZE
+        if MAX_EVAL_BATCHES is not None:
+            num_batches = min(num_batches, MAX_EVAL_BATCHES)
         
         for batch_idx in range(num_batches):
             start_idx = batch_idx * BATCH_SIZE
@@ -252,7 +263,11 @@ def eval_one_epoch(sess, ops, test_writer):
             
     log_string('eval mean loss: %f' % (loss_sum / float(total_seen)))
     log_string('eval accuracy: %f'% (total_correct / float(total_seen)))
-    log_string('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float))))
+    seen_class = np.asarray(total_seen_class, dtype=np.float64)
+    correct_class = np.asarray(total_correct_class, dtype=np.float64)
+    class_accuracy = np.divide(correct_class, seen_class,
+                               out=np.zeros_like(correct_class), where=seen_class != 0)
+    log_string('eval avg class acc: %f' % np.mean(class_accuracy))
          
 
 

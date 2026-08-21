@@ -1,6 +1,8 @@
 import argparse
 import os
 import sys
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)

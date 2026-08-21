@@ -1,11 +1,12 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import numpy as np
 import argparse
 import socket
 import importlib
 import time
 import os
-import scipy.misc
+from PIL import Image
 import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
@@ -23,6 +24,8 @@ parser.add_argument('--num_point', type=int, default=1024, help='Point Number [2
 parser.add_argument('--model_path', default='log/model.ckpt', help='model checkpoint file path [default: log/model.ckpt]')
 parser.add_argument('--dump_dir', default='dump', help='dump folder path [dump]')
 parser.add_argument('--visu', action='store_true', help='Whether to dump image for error case [default: False]')
+parser.add_argument('--max_eval_batches', type=int, default=None,
+                    help='Optional per-file evaluation batch limit for smoke tests')
 FLAGS = parser.parse_args()
 
 
@@ -30,6 +33,7 @@ BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
 MODEL_PATH = FLAGS.model_path
 GPU_INDEX = FLAGS.gpu
+MAX_EVAL_BATCHES = FLAGS.max_eval_batches
 MODEL = importlib.import_module(FLAGS.model) # import network module
 DUMP_DIR = FLAGS.dump_dir
 if not os.path.exists(DUMP_DIR): os.mkdir(DUMP_DIR)
@@ -105,6 +109,8 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
         
         file_size = current_data.shape[0]
         num_batches = file_size // BATCH_SIZE
+        if MAX_EVAL_BATCHES is not None:
+            num_batches = min(num_batches, MAX_EVAL_BATCHES)
         print(file_size)
         
         for batch_idx in range(num_batches):
@@ -151,14 +157,16 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
                                                            SHAPE_NAMES[pred_val[i-start_idx]])
                     img_filename = os.path.join(DUMP_DIR, img_filename)
                     output_img = pc_util.point_cloud_three_views(np.squeeze(current_data[i, :, :]))
-                    scipy.misc.imsave(img_filename, output_img)
+                    Image.fromarray(output_img).save(img_filename)
                     error_cnt += 1
                 
     log_string('eval mean loss: %f' % (loss_sum / float(total_seen)))
     log_string('eval accuracy: %f' % (total_correct / float(total_seen)))
-    log_string('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float))))
-    
-    class_accuracies = np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float)
+    seen_class = np.asarray(total_seen_class, dtype=np.float64)
+    correct_class = np.asarray(total_correct_class, dtype=np.float64)
+    class_accuracies = np.divide(correct_class, seen_class,
+                                 out=np.zeros_like(correct_class), where=seen_class != 0)
+    log_string('eval avg class acc: %f' % np.mean(class_accuracies))
     for i, name in enumerate(SHAPE_NAMES):
         log_string('%10s:\t%0.3f' % (name, class_accuracies[i]))
     
