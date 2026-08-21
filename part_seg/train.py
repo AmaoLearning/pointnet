@@ -21,7 +21,11 @@ parser.add_argument('--epoch', type=int, default=200, help='Epoch to run [defaul
 parser.add_argument('--point_num', type=int, default=2048, help='Point Number [256/512/1024/2048]')
 parser.add_argument('--output_dir', type=str, default='train_results', help='Directory that stores all training logs and trained models')
 parser.add_argument('--wd', type=float, default=0, help='Weight Decay [Default: 0.0]')
+parser.add_argument('--gpu_memory_fraction', type=float, default=0.20,
+                    help='Maximum fraction of one GPU memory to reserve [default: 0.20]')
 FLAGS = parser.parse_args()
+if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
+    parser.error('--gpu_memory_fraction must be in (0, 1]')
 
 hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
 
@@ -178,6 +182,7 @@ def train():
 
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
+        config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
         config.allow_soft_placement = True
         sess = tf.Session(config=config)
         

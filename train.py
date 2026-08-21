@@ -31,6 +31,8 @@ parser.add_argument('--max_train_batches', type=int, default=None,
                     help='Optional per-file training batch limit for smoke tests')
 parser.add_argument('--max_eval_batches', type=int, default=None,
                     help='Optional per-file evaluation batch limit for smoke tests')
+parser.add_argument('--gpu_memory_fraction', type=float, default=0.20,
+                    help='Maximum fraction of one GPU memory to reserve [default: 0.20]')
 FLAGS = parser.parse_args()
 
 
@@ -45,6 +47,9 @@ DECAY_STEP = FLAGS.decay_step
 DECAY_RATE = FLAGS.decay_rate
 MAX_TRAIN_BATCHES = FLAGS.max_train_batches
 MAX_EVAL_BATCHES = FLAGS.max_eval_batches
+GPU_MEMORY_FRACTION = FLAGS.gpu_memory_fraction
+if not 0.0 < GPU_MEMORY_FRACTION <= 1.0:
+    parser.error('--gpu_memory_fraction must be in (0, 1]')
 
 MODEL = importlib.import_module(FLAGS.model) # import network module
 MODEL_FILE = os.path.join(BASE_DIR, 'models', FLAGS.model+'.py')
@@ -134,6 +139,7 @@ def train():
         # Create a session
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
+        config.gpu_options.per_process_gpu_memory_fraction = GPU_MEMORY_FRACTION
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
