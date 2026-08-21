@@ -196,7 +196,8 @@ def train():
             trainer = tf.train.AdamOptimizer(learning_rate)
             train_op = trainer.minimize(loss, var_list=train_variables, global_step=batch)
 
-        saver = tf.train.Saver()
+        saver = tf.train.Saver(max_to_keep=None)
+        best_saver = tf.train.Saver(max_to_keep=1)
 
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
@@ -421,7 +422,7 @@ def train():
                 printout(flog, 'Successfully store the checkpoint model into ' + cp_filename)
             if seg_accuracy > best_seg_accuracy:
                 best_seg_accuracy = seg_accuracy
-                best_filename = saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'best.ckpt'))
+                best_filename = best_saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'best.ckpt'))
                 printout(flog, 'Successfully store the best checkpoint model into %s (seg_accuracy=%f)' %
                          (best_filename, best_seg_accuracy))
 

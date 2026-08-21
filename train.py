@@ -153,7 +153,8 @@ def train():
             train_op = optimizer.minimize(loss, global_step=batch)
             
             # Add ops to save and restore all the variables.
-            saver = tf.train.Saver()
+            saver = tf.train.Saver(max_to_keep=None)
+            best_saver = tf.train.Saver(max_to_keep=1)
             
         # Create a session
         config = tf.ConfigProto()
@@ -206,7 +207,7 @@ def train():
             if eval_accuracy > best_accuracy:
                 best_accuracy = eval_accuracy
                 best_class_accuracy = eval_class_accuracy
-                best_path = saver.save(sess, os.path.join(LOG_DIR, "best_model.ckpt"))
+                best_path = best_saver.save(sess, os.path.join(LOG_DIR, "best_model.ckpt"))
                 log_string("Best model saved in file: %s (accuracy=%f, class_accuracy=%f)" %
                            (best_path, best_accuracy, best_class_accuracy))
 
