@@ -114,29 +114,38 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
         print(current_data.shape)
         
         file_size = current_data.shape[0]
-        num_batches = file_size // BATCH_SIZE
+        # Evaluate the final partial batch as well.  The original code used
+        # floor division and silently dropped samples whenever a HDF5 file's
+        # size was not divisible by BATCH_SIZE.
+        num_batches = (file_size + BATCH_SIZE - 1) // BATCH_SIZE
         if MAX_EVAL_BATCHES is not None:
             num_batches = min(num_batches, MAX_EVAL_BATCHES)
         print(file_size)
         
         for batch_idx in range(num_batches):
             start_idx = batch_idx * BATCH_SIZE
-            end_idx = (batch_idx+1) * BATCH_SIZE
+            end_idx = min((batch_idx+1) * BATCH_SIZE, file_size)
             cur_batch_size = end_idx - start_idx
+            # The graph has a fixed BATCH_SIZE placeholder. Pad only the
+            # inputs for the last batch; metrics below count real samples.
+            batch_data = np.zeros((BATCH_SIZE, NUM_POINT, 3), dtype=current_data.dtype)
+            batch_labels = np.zeros((BATCH_SIZE,), dtype=current_label.dtype)
+            batch_data[:cur_batch_size] = current_data[start_idx:end_idx]
+            batch_labels[:cur_batch_size] = current_label[start_idx:end_idx]
             
             # Aggregating BEG
             batch_loss_sum = 0 # sum of losses for the batch
             batch_pred_sum = np.zeros((cur_batch_size, NUM_CLASSES)) # score for classes
             batch_pred_classes = np.zeros((cur_batch_size, NUM_CLASSES)) # 0/1 for classes
             for vote_idx in range(num_votes):
-                rotated_data = provider.rotate_point_cloud_by_angle(current_data[start_idx:end_idx, :, :],
+                rotated_data = provider.rotate_point_cloud_by_angle(batch_data,
                                                   vote_idx/float(num_votes) * np.pi * 2)
                 feed_dict = {ops['pointclouds_pl']: rotated_data,
-                             ops['labels_pl']: current_label[start_idx:end_idx],
+                             ops['labels_pl']: batch_labels,
                              ops['is_training_pl']: is_training}
                 loss_val, pred_val = sess.run([ops['loss'], ops['pred']],
                                           feed_dict=feed_dict)
-                batch_pred_sum += pred_val
+                batch_pred_sum += pred_val[:cur_batch_size]
                 batch_pred_val = np.argmax(pred_val, 1)
                 for el_idx in range(cur_batch_size):
                     batch_pred_classes[el_idx, batch_pred_val[el_idx]] += 1
