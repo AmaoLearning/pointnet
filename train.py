@@ -25,8 +25,12 @@ parser.add_argument('--batch_size', type=int, default=32, help='Batch Size durin
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
 parser.add_argument('--optimizer', default='adam', help='adam or momentum [default: adam]')
-parser.add_argument('--decay_step', type=int, default=200000, help='Decay step for lr decay [default: 200000]')
-parser.add_argument('--decay_rate', type=float, default=0.7, help='Decay rate for lr decay [default: 0.8]')
+parser.add_argument('--decay_step', type=int, default=None,
+                    help='Decay step in examples; default is 20 training epochs')
+parser.add_argument('--decay_rate', type=float, default=0.5,
+                    help='Decay rate for lr decay [default: 0.5, paper protocol]')
+parser.add_argument('--seed', type=int, default=0,
+                    help='Random seed for reproducible training [default: 0]')
 parser.add_argument('--max_train_batches', type=int, default=None,
                     help='Optional per-file training batch limit for smoke tests')
 parser.add_argument('--max_eval_batches', type=int, default=None,
@@ -51,6 +55,9 @@ GPU_MEMORY_FRACTION = FLAGS.gpu_memory_fraction
 if not 0.0 < GPU_MEMORY_FRACTION <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
 
+np.random.seed(FLAGS.seed)
+tf.set_random_seed(FLAGS.seed)
+
 MODEL = importlib.import_module(FLAGS.model) # import network module
 MODEL_FILE = os.path.join(BASE_DIR, 'models', FLAGS.model+'.py')
 LOG_DIR = FLAGS.log_dir
@@ -63,11 +70,6 @@ LOG_FOUT.write(str(FLAGS)+'\n')
 MAX_NUM_POINT = 2048
 NUM_CLASSES = 40
 
-BN_INIT_DECAY = 0.5
-BN_DECAY_DECAY_RATE = 0.5
-BN_DECAY_DECAY_STEP = float(DECAY_STEP)
-BN_DECAY_CLIP = 0.99
-
 HOSTNAME = socket.gethostname()
 
 # ModelNet40 official train/test split
@@ -75,6 +77,23 @@ TRAIN_FILES = provider.getDataFiles( \
     os.path.join(BASE_DIR, 'data/modelnet40_ply_hdf5_2048/train_files.txt'))
 TEST_FILES = provider.getDataFiles(\
     os.path.join(BASE_DIR, 'data/modelnet40_ply_hdf5_2048/test_files.txt'))
+
+def count_h5_samples(files):
+    total = 0
+    for filename in files:
+        with h5py.File(filename, 'r') as handle:
+            total += int(handle['label'].shape[0])
+    return total
+
+
+TRAIN_NUM_SAMPLES = count_h5_samples(TRAIN_FILES)
+if DECAY_STEP is None:
+    DECAY_STEP = TRAIN_NUM_SAMPLES * 20
+
+BN_INIT_DECAY = 0.5
+BN_DECAY_DECAY_RATE = 0.5
+BN_DECAY_DECAY_STEP = float(DECAY_STEP)
+BN_DECAY_CLIP = 0.99
 
 def log_string(out_str):
     LOG_FOUT.write(out_str+'\n')
@@ -167,17 +186,29 @@ def train():
                'merged': merged,
                'step': batch}
 
+        best_accuracy = -1.0
+        best_class_accuracy = -1.0
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
              
             train_one_epoch(sess, ops, train_writer)
-            eval_one_epoch(sess, ops, test_writer)
+            eval_accuracy, eval_class_accuracy = eval_one_epoch(sess, ops, test_writer)
             
-            # Save the variables to disk.
-            if epoch % 10 == 0:
-                save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
-                log_string("Model saved in file: %s" % save_path)
+            # Keep a continuously updated checkpoint, periodic epoch snapshots,
+            # and the best validation checkpoint.  The original script saved
+            # epoch 0,10,...,240 for a 250-epoch run and never saved the final
+            # state, which made the reported model ambiguous.
+            save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
+            if (epoch + 1) % 10 == 0 or epoch == MAX_EPOCH - 1:
+                epoch_path = saver.save(sess, os.path.join(LOG_DIR, "model_epoch_%03d.ckpt" % (epoch + 1)))
+                log_string("Model saved in file: %s" % epoch_path)
+            if eval_accuracy > best_accuracy:
+                best_accuracy = eval_accuracy
+                best_class_accuracy = eval_class_accuracy
+                best_path = saver.save(sess, os.path.join(LOG_DIR, "best_model.ckpt"))
+                log_string("Best model saved in file: %s (accuracy=%f, class_accuracy=%f)" %
+                           (best_path, best_accuracy, best_class_accuracy))
 
 
 
@@ -244,24 +275,29 @@ def eval_one_epoch(sess, ops, test_writer):
         current_label = np.squeeze(current_label)
         
         file_size = current_data.shape[0]
-        num_batches = file_size // BATCH_SIZE
+        num_batches = (file_size + BATCH_SIZE - 1) // BATCH_SIZE
         if MAX_EVAL_BATCHES is not None:
             num_batches = min(num_batches, MAX_EVAL_BATCHES)
         
         for batch_idx in range(num_batches):
             start_idx = batch_idx * BATCH_SIZE
-            end_idx = (batch_idx+1) * BATCH_SIZE
+            end_idx = min((batch_idx+1) * BATCH_SIZE, file_size)
+            cur_batch_size = end_idx - start_idx
+            batch_data = np.zeros((BATCH_SIZE, NUM_POINT, 3), dtype=current_data.dtype)
+            batch_labels = np.zeros((BATCH_SIZE,), dtype=current_label.dtype)
+            batch_data[:cur_batch_size] = current_data[start_idx:end_idx]
+            batch_labels[:cur_batch_size] = current_label[start_idx:end_idx]
 
-            feed_dict = {ops['pointclouds_pl']: current_data[start_idx:end_idx, :, :],
-                         ops['labels_pl']: current_label[start_idx:end_idx],
+            feed_dict = {ops['pointclouds_pl']: batch_data,
+                         ops['labels_pl']: batch_labels,
                          ops['is_training_pl']: is_training}
             summary, step, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
                 ops['loss'], ops['pred']], feed_dict=feed_dict)
             pred_val = np.argmax(pred_val, 1)
-            correct = np.sum(pred_val == current_label[start_idx:end_idx])
+            correct = np.sum(pred_val[:cur_batch_size] == current_label[start_idx:end_idx])
             total_correct += correct
-            total_seen += BATCH_SIZE
-            loss_sum += (loss_val*BATCH_SIZE)
+            total_seen += cur_batch_size
+            loss_sum += (loss_val*cur_batch_size)
             for i in range(start_idx, end_idx):
                 l = current_label[i]
                 total_seen_class[l] += 1
@@ -273,7 +309,10 @@ def eval_one_epoch(sess, ops, test_writer):
     correct_class = np.asarray(total_correct_class, dtype=np.float64)
     class_accuracy = np.divide(correct_class, seen_class,
                                out=np.zeros_like(correct_class), where=seen_class != 0)
-    log_string('eval avg class acc: %f' % np.mean(class_accuracy))
+    mean_class_accuracy = float(np.mean(class_accuracy))
+    accuracy = float(total_correct / float(total_seen))
+    log_string('eval avg class acc: %f' % mean_class_accuracy)
+    return accuracy, mean_class_accuracy
          
 
 

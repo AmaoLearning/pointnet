@@ -110,7 +110,6 @@ def get_model(point_cloud, input_label, is_training, cat_num, part_num, \
     net = tf.reshape(out_max, [batch_size, -1])
     net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training, scope='cla/fc1', bn_decay=bn_decay)
     net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training, scope='cla/fc2', bn_decay=bn_decay)
-    net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training, scope='cla/dp1')
     net = tf_util.fully_connected(net, cat_num, activation_fn=None, scope='cla/fc3')
 
     # segmentation network
@@ -122,10 +121,8 @@ def get_model(point_cloud, input_label, is_training, cat_num, part_num, \
 
     net2 = tf_util.conv2d(concat, 256, [1,1], padding='VALID', stride=[1,1], bn_decay=bn_decay,
                         bn=True, is_training=is_training, scope='seg/conv1', weight_decay=weight_decay)
-    net2 = tf_util.dropout(net2, keep_prob=0.8, is_training=is_training, scope='seg/dp1')
     net2 = tf_util.conv2d(net2, 256, [1,1], padding='VALID', stride=[1,1], bn_decay=bn_decay,
                         bn=True, is_training=is_training, scope='seg/conv2', weight_decay=weight_decay)
-    net2 = tf_util.dropout(net2, keep_prob=0.8, is_training=is_training, scope='seg/dp2')
     net2 = tf_util.conv2d(net2, 128, [1,1], padding='VALID', stride=[1,1], bn_decay=bn_decay,
                         bn=True, is_training=is_training, scope='seg/conv3', weight_decay=weight_decay)
     net2 = tf_util.conv2d(net2, part_num, [1,1], padding='VALID', stride=[1,1], activation_fn=None, 

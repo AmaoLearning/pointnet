@@ -116,12 +116,22 @@ def load_pts_seg_files(pts_file, seg_file, catid):
         pts_str = [item.rstrip() for item in f.readlines()]
         pts = np.array([np.float32(s.split()) for s in pts_str], dtype=np.float32)
     with open(seg_file, 'r') as f:
-        part_ids = np.array([int(item.rstrip()) for item in f.readlines()], dtype=np.uint8)
-        # The supplied raw ShapeNetPart annotations use 1-based part ids,
-        # whereas the HDF5 mapping used by the model is 0-based. Detect this
-        # layout per file so both conventions remain supported.
-        offset = 1 if part_ids.size and part_ids.min() >= 1 and catid + '_0' in cpid2oid else 0
-        seg = np.array([cpid2oid[catid+'_'+str(int(x) - offset)] for x in part_ids])
+        part_ids = np.array([int(item.rstrip()) for item in f.readlines()], dtype=np.int64)
+        # Raw ShapeNetPart annotations and prepared HDF5 labels use different
+        # conventions in some exports. Resolve the offset by requiring every
+        # point id to exist in the category mapping, and fail loudly instead of
+        # silently producing a shifted evaluation when neither convention fits.
+        valid_offsets = []
+        for candidate in (0, 1):
+            if all(catid + '_' + str(int(x) - candidate) in cpid2oid for x in part_ids):
+                valid_offsets.append(candidate)
+        if len(valid_offsets) == 1:
+            offset = valid_offsets[0]
+        elif len(valid_offsets) == 2:
+            offset = 0 if np.any(part_ids == 0) else 1
+        else:
+            raise ValueError('Part-label ids in %s do not match category mapping %s' % (seg_file, catid))
+        seg = np.array([cpid2oid[catid+'_'+str(int(x) - offset)] for x in part_ids], dtype=np.int32)
     return pts, seg
 
 def pc_augment_to_point_num(pts, pn):

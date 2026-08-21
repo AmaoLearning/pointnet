@@ -3,6 +3,7 @@ import subprocess
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import numpy as np
+import h5py
 from datetime import datetime
 import json
 import os
@@ -23,9 +24,13 @@ parser.add_argument('--output_dir', type=str, default='train_results', help='Dir
 parser.add_argument('--wd', type=float, default=0, help='Weight Decay [Default: 0.0]')
 parser.add_argument('--gpu_memory_fraction', type=float, default=0.20,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.20]')
+parser.add_argument('--seed', type=int, default=0,
+                    help='Random seed for reproducible training [default: 0]')
 FLAGS = parser.parse_args()
 if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
+np.random.seed(FLAGS.seed)
+tf.set_random_seed(FLAGS.seed)
 
 hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
 
@@ -54,15 +59,7 @@ print('#### Batch Size: {0}'.format(batch_size))
 print('#### Point Number: {0}'.format(point_num))
 print('#### Training using GPU: {0}'.format(FLAGS.gpu))
 
-DECAY_STEP = 16881 * 20
-DECAY_RATE = 0.5
-
 LEARNING_RATE_CLIP = 1e-5
-
-BN_INIT_DECAY = 0.5
-BN_DECAY_DECAY_RATE = 0.5
-BN_DECAY_DECAY_STEP = float(DECAY_STEP * 2)
-BN_DECAY_CLIP = 0.99
 
 BASE_LEARNING_RATE = 0.001
 MOMENTUM = 0.9
@@ -71,6 +68,27 @@ print('### Training epoch: {0}'.format(TRAINING_EPOCHES))
 
 TRAINING_FILE_LIST = os.path.join(hdf5_data_dir, 'train_hdf5_file_list.txt')
 TESTING_FILE_LIST = os.path.join(hdf5_data_dir, 'val_hdf5_file_list.txt')
+
+def count_h5_samples(file_list):
+    total = 0
+    for relative_path in file_list:
+        filename = os.path.join(hdf5_data_dir, relative_path)
+        with h5py.File(filename, 'r') as handle:
+            total += int(handle['label'].shape[0])
+    return total
+
+
+TRAIN_FILE_LIST = provider.getDataFiles(TRAINING_FILE_LIST)
+TRAIN_NUM_SAMPLES = count_h5_samples(TRAIN_FILE_LIST)
+# The paper divides the learning rate by two every 20 epochs.  Express the
+# schedule in examples so it remains correct when batch size changes.
+DECAY_STEP = TRAIN_NUM_SAMPLES * 20
+DECAY_RATE = 0.5
+
+BN_INIT_DECAY = 0.5
+BN_DECAY_DECAY_RATE = 0.5
+BN_DECAY_DECAY_STEP = float(DECAY_STEP)
+BN_DECAY_CLIP = 0.99
 
 MODEL_STORAGE_PATH = os.path.join(output_dir, 'trained_models')
 if not os.path.exists(MODEL_STORAGE_PATH):
@@ -308,16 +326,25 @@ def train():
                 cur_labels_one_hot = convert_label_to_one_hot(cur_labels)
 
                 num_data = len(cur_labels)
-                num_batch = num_data // batch_size
+                num_batch = (num_data + batch_size - 1) // batch_size
 
                 for j in range(num_batch):
                     begidx = j * batch_size
-                    endidx = (j + 1) * batch_size
+                    endidx = min((j + 1) * batch_size, num_data)
+                    cur_batch_size = endidx - begidx
+                    batch_data = np.zeros((batch_size, point_num, 3), dtype=cur_data.dtype)
+                    batch_labels = np.zeros((batch_size,), dtype=cur_labels.dtype)
+                    batch_one_hot = np.zeros((batch_size, NUM_CATEGORIES), dtype=cur_labels_one_hot.dtype)
+                    batch_seg = np.zeros((batch_size, point_num), dtype=cur_seg.dtype)
+                    batch_data[:cur_batch_size] = cur_data[begidx:endidx, ...]
+                    batch_labels[:cur_batch_size] = cur_labels[begidx:endidx, ...]
+                    batch_one_hot[:cur_batch_size] = cur_labels_one_hot[begidx:endidx, ...]
+                    batch_seg[:cur_batch_size] = cur_seg[begidx:endidx, ...]
                     feed_dict = {
-                            pointclouds_ph: cur_data[begidx: endidx, ...], 
-                            labels_ph: cur_labels[begidx: endidx, ...], 
-                            input_label_ph: cur_labels_one_hot[begidx: endidx, ...], 
-                            seg_ph: cur_seg[begidx: endidx, ...],
+                            pointclouds_ph: batch_data,
+                            labels_ph: batch_labels,
+                            input_label_ph: batch_one_hot,
+                            seg_ph: batch_seg,
                             is_training_ph: is_training, 
                             }
 
@@ -327,17 +354,16 @@ def train():
                             per_instance_seg_loss, labels_pred, seg_pred, per_instance_seg_pred_res], \
                             feed_dict=feed_dict)
 
-                    per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx: endidx, ...], axis=1)
-                    average_part_acc = np.mean(per_instance_part_acc)
+                    per_instance_part_acc = np.mean(pred_seg_res[:cur_batch_size] == cur_seg[begidx: endidx, ...], axis=1)
 
-                    total_seen += 1
-                    total_loss += loss_val
-                    total_label_loss += label_loss_val
-                    total_seg_loss += seg_loss_val
+                    total_seen += cur_batch_size
+                    total_loss += loss_val * cur_batch_size
+                    total_label_loss += label_loss_val * cur_batch_size
+                    total_seg_loss += seg_loss_val * cur_batch_size
                     
-                    per_instance_label_pred = np.argmax(label_pred_val, axis=1)
-                    total_label_acc += np.mean(np.float32(per_instance_label_pred == cur_labels[begidx: endidx, ...]))
-                    total_seg_acc += average_part_acc
+                    per_instance_label_pred = np.argmax(label_pred_val[:cur_batch_size], axis=1)
+                    total_label_acc += np.sum(np.float32(per_instance_label_pred == cur_labels[begidx: endidx, ...]))
+                    total_seg_acc += np.sum(per_instance_part_acc)
 
                     for shape_idx in range(begidx, endidx):
                         total_seen_per_cat[cur_labels[shape_idx]] += 1
@@ -373,23 +399,31 @@ def train():
                     printout(flog, '\t\tCategory %s Label Accuracy: %f' % (all_obj_cats[cat_idx][0], total_label_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
                     printout(flog, '\t\tCategory %s Seg Accuracy: %f' % (all_obj_cats[cat_idx][0], total_seg_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
 
+            return float(total_seg_acc)
+
         if not os.path.exists(MODEL_STORAGE_PATH):
             os.mkdir(MODEL_STORAGE_PATH)
 
+        best_seg_accuracy = -1.0
         for epoch in range(TRAINING_EPOCHES):
-            printout(flog, '\n<<< Testing on the test dataset ...')
-            eval_one_epoch(epoch)
-
             printout(flog, '\n>>> Training for the epoch %d/%d ...' % (epoch, TRAINING_EPOCHES))
 
             train_file_idx = np.arange(0, len(train_file_list))
             np.random.shuffle(train_file_idx)
 
             train_one_epoch(train_file_idx, epoch)
+            printout(flog, '\n<<< Testing on the validation dataset ...')
+            seg_accuracy = eval_one_epoch(epoch)
 
-            if (epoch+1) % 10 == 0:
+            latest_filename = saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'latest.ckpt'))
+            if (epoch+1) % 10 == 0 or epoch == TRAINING_EPOCHES - 1:
                 cp_filename = saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'epoch_' + str(epoch+1)+'.ckpt'))
                 printout(flog, 'Successfully store the checkpoint model into ' + cp_filename)
+            if seg_accuracy > best_seg_accuracy:
+                best_seg_accuracy = seg_accuracy
+                best_filename = saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'best.ckpt'))
+                printout(flog, 'Successfully store the best checkpoint model into %s (seg_accuracy=%f)' %
+                         (best_filename, best_seg_accuracy))
 
             flog.flush()
 
