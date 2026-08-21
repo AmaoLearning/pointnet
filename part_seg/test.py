@@ -13,7 +13,11 @@ import pointnet_part_seg as model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', default='train_results/trained_models/epoch_190.ckpt', help='Model checkpoint path')
+parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
+                    help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
 FLAGS = parser.parse_args()
+if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
+    parser.error('--gpu_memory_fraction must be in (0, 1]')
 
 
 # DEFAULT SETTINGS
@@ -144,6 +148,7 @@ def predict():
     
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
     config.allow_soft_placement = True
 
     with tf.Session(config=config) as sess:

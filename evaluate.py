@@ -26,6 +26,8 @@ parser.add_argument('--dump_dir', default='dump', help='dump folder path [dump]'
 parser.add_argument('--visu', action='store_true', help='Whether to dump image for error case [default: False]')
 parser.add_argument('--max_eval_batches', type=int, default=None,
                     help='Optional per-file evaluation batch limit for smoke tests')
+parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
+                    help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
 FLAGS = parser.parse_args()
 
 
@@ -34,6 +36,9 @@ NUM_POINT = FLAGS.num_point
 MODEL_PATH = FLAGS.model_path
 GPU_INDEX = FLAGS.gpu
 MAX_EVAL_BATCHES = FLAGS.max_eval_batches
+GPU_MEMORY_FRACTION = FLAGS.gpu_memory_fraction
+if not 0.0 < GPU_MEMORY_FRACTION <= 1.0:
+    parser.error('--gpu_memory_fraction must be in (0, 1]')
 MODEL = importlib.import_module(FLAGS.model) # import network module
 DUMP_DIR = FLAGS.dump_dir
 if not os.path.exists(DUMP_DIR): os.mkdir(DUMP_DIR)
@@ -74,6 +79,7 @@ def evaluate(num_votes):
     # Create a session
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+    config.gpu_options.per_process_gpu_memory_fraction = GPU_MEMORY_FRACTION
     config.allow_soft_placement = True
     config.log_device_placement = True
     sess = tf.Session(config=config)
