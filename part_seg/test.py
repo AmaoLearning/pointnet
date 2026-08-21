@@ -45,10 +45,17 @@ for idx in range(len(oid2cpid)):
 
 all_obj_cat_file = os.path.join(hdf5_data_dir, 'all_object_categories.txt')
 fin = open(all_obj_cat_file, 'r')
-lines = [line.rstrip() for line in fin.readlines()]
-objcats = [line.split()[1] for line in lines]
-objnames = [line.split()[0] for line in lines]
-on2oid = {objcats[i]:i for i in range(len(objcats))}
+category_rows = [line.split() for line in fin.readlines() if line.strip()]
+# The original PointNet file uses ``name synset_id`` while the supplied
+# ShapeNetPart export uses ``synset_id name``. Keep the synset id as the
+# canonical category key because the test list and part mappings use it.
+if category_rows and len(category_rows[0][0]) == 8 and category_rows[0][0].isdigit():
+    objcats = [row[0] for row in category_rows]
+    objnames = [row[1] for row in category_rows]
+else:
+    objnames = [row[0] for row in category_rows]
+    objcats = [row[1] for row in category_rows]
+on2oid = {objcats[i]: i for i in range(len(objcats))}
 fin.close()
 
 color_map_file = os.path.join(hdf5_data_dir, 'part_color_mapping.json')
