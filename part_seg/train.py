@@ -26,6 +26,10 @@ parser.add_argument('--gpu_memory_fraction', type=float, default=0.20,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.20]')
 parser.add_argument('--seed', type=int, default=0,
                     help='Random seed for reproducible training [default: 0]')
+parser.add_argument('--augment', action='store_true',
+                    help='Apply paper-style up-axis rotation and jitter during training')
+parser.add_argument('--jitter_sigma', type=float, default=0.02,
+                    help='Gaussian jitter standard deviation when augmentation is enabled')
 FLAGS = parser.parse_args()
 if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
@@ -249,8 +253,13 @@ def train():
                     begidx = j * batch_size
                     endidx = (j + 1) * batch_size
 
+                    batch_data = cur_data[begidx: endidx, ...]
+                    if FLAGS.augment:
+                        batch_data = provider.rotate_point_cloud(batch_data)
+                        batch_data = provider.jitter_point_cloud(batch_data, sigma=FLAGS.jitter_sigma)
+
                     feed_dict = {
-                            pointclouds_ph: cur_data[begidx: endidx, ...], 
+                            pointclouds_ph: batch_data,
                             labels_ph: cur_labels[begidx: endidx, ...], 
                             input_label_ph: cur_labels_one_hot[begidx: endidx, ...], 
                             seg_ph: cur_seg[begidx: endidx, ...],

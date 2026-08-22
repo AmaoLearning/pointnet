@@ -31,6 +31,8 @@ parser.add_argument('--decay_rate', type=float, default=0.5,
                     help='Decay rate for lr decay [default: 0.5, paper protocol]')
 parser.add_argument('--seed', type=int, default=0,
                     help='Random seed for reproducible training [default: 0]')
+parser.add_argument('--jitter_sigma', type=float, default=0.02,
+                    help='Gaussian jitter standard deviation [default: 0.02]')
 parser.add_argument('--max_train_batches', type=int, default=None,
                     help='Optional per-file training batch limit for smoke tests')
 parser.add_argument('--max_eval_batches', type=int, default=None,
@@ -243,7 +245,7 @@ def train_one_epoch(sess, ops, train_writer):
             
             # Augment batched point clouds by rotation and jittering
             rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
-            jittered_data = provider.jitter_point_cloud(rotated_data)
+            jittered_data = provider.jitter_point_cloud(rotated_data, sigma=FLAGS.jitter_sigma)
             feed_dict = {ops['pointclouds_pl']: jittered_data,
                          ops['labels_pl']: current_label[start_idx:end_idx],
                          ops['is_training_pl']: is_training,}
