@@ -38,6 +38,10 @@ parser.add_argument('--disable_augment', action='store_true',
 parser.add_argument('--train_sampling', choices=['random', 'head'], default='random',
                     help='How to select NUM_POINT points from prepared HDF5 clouds '
                          '[default: random per training epoch]')
+parser.add_argument('--legacy_fc1_dropout', action='store_true',
+                    help='Enable the historical extra dropout after the 512-D layer')
+parser.add_argument('--bn_decay_step_multiplier', type=float, default=2.0,
+                    help='BN decay step as a multiple of the 20-epoch LR step')
 parser.add_argument('--max_train_batches', type=int, default=None,
                     help='Optional per-file training batch limit for smoke tests')
 parser.add_argument('--max_eval_batches', type=int, default=None,
@@ -61,11 +65,15 @@ MAX_EVAL_BATCHES = FLAGS.max_eval_batches
 GPU_MEMORY_FRACTION = FLAGS.gpu_memory_fraction
 if not 0.0 < GPU_MEMORY_FRACTION <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
+if FLAGS.bn_decay_step_multiplier <= 0:
+    parser.error('--bn_decay_step_multiplier must be positive')
 
 np.random.seed(FLAGS.seed)
 tf.set_random_seed(FLAGS.seed)
 
 MODEL = importlib.import_module(FLAGS.model) # import network module
+if hasattr(MODEL, 'USE_FC1_DROPOUT'):
+    MODEL.USE_FC1_DROPOUT = FLAGS.legacy_fc1_dropout
 MODEL_FILE = os.path.join(BASE_DIR, 'models', FLAGS.model+'.py')
 LOG_DIR = FLAGS.log_dir
 if not os.path.exists(LOG_DIR): os.mkdir(LOG_DIR)
@@ -101,7 +109,7 @@ BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
 # Match the public PointNet schedule: BN decay changes on a slower 40-epoch
 # time scale while the learning rate halves every 20 epochs.
-BN_DECAY_DECAY_STEP = float(DECAY_STEP * 2)
+BN_DECAY_DECAY_STEP = float(DECAY_STEP * FLAGS.bn_decay_step_multiplier)
 BN_DECAY_CLIP = 0.99
 
 def log_string(out_str):

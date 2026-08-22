@@ -28,6 +28,8 @@ parser.add_argument('--max_eval_batches', type=int, default=None,
                     help='Optional per-file evaluation batch limit for smoke tests')
 parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
+parser.add_argument('--legacy_fc1_dropout', action='store_true',
+                    help='Enable the historical extra dropout after the 512-D layer')
 FLAGS = parser.parse_args()
 
 
@@ -40,6 +42,8 @@ GPU_MEMORY_FRACTION = FLAGS.gpu_memory_fraction
 if not 0.0 < GPU_MEMORY_FRACTION <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
 MODEL = importlib.import_module(FLAGS.model) # import network module
+if hasattr(MODEL, 'USE_FC1_DROPOUT'):
+    MODEL.USE_FC1_DROPOUT = FLAGS.legacy_fc1_dropout
 DUMP_DIR = FLAGS.dump_dir
 if not os.path.exists(DUMP_DIR): os.mkdir(DUMP_DIR)
 LOG_FOUT = open(os.path.join(DUMP_DIR, 'log_evaluate.txt'), 'w')
