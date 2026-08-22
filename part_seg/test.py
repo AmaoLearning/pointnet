@@ -13,6 +13,10 @@ import pointnet_part_seg as model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', default='train_results/trained_models/epoch_190.ckpt', help='Model checkpoint path')
+parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: 0]')
+parser.add_argument('--output_dir', default='test_results', help='Evaluation output directory')
+parser.add_argument('--output_verbose', action='store_true',
+                    help='Write per-shape OBJ visualizations and logs')
 parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
 FLAGS = parser.parse_args()
@@ -24,9 +28,9 @@ if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
 pretrained_model_path = FLAGS.model_path # os.path.join(BASE_DIR, './pretrained_model/model.ckpt')
 hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
 ply_data_dir = os.path.join(BASE_DIR, './PartAnnotation')
-gpu_to_use = 0
-output_dir = os.path.join(BASE_DIR, './test_results')
-output_verbose = True   # If true, output all color-coded part segmentation obj files
+gpu_to_use = FLAGS.gpu
+output_dir = os.path.join(BASE_DIR, FLAGS.output_dir)
+output_verbose = FLAGS.output_verbose
 
 # MAIN SCRIPT
 point_num = 3000            # the max number of points in the all testing data shapes
