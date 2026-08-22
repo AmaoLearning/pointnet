@@ -30,9 +30,13 @@ parser.add_argument('--augment', action='store_true',
                     help='Apply paper-style up-axis rotation and jitter during training')
 parser.add_argument('--jitter_sigma', type=float, default=0.02,
                     help='Gaussian jitter standard deviation when augmentation is enabled')
+parser.add_argument('--bn_decay_step_multiplier', type=float, default=2.0,
+                    help='BN decay step as a multiple of the 20-epoch LR step')
 FLAGS = parser.parse_args()
 if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
+if FLAGS.bn_decay_step_multiplier <= 0:
+    parser.error('--bn_decay_step_multiplier must be positive')
 np.random.seed(FLAGS.seed)
 tf.set_random_seed(FLAGS.seed)
 
@@ -93,7 +97,7 @@ BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
 # Match the public PointNet schedule: BN decay changes on a slower 40-epoch
 # time scale while the learning rate halves every 20 epochs.
-BN_DECAY_DECAY_STEP = float(DECAY_STEP * 2)
+BN_DECAY_DECAY_STEP = float(DECAY_STEP * FLAGS.bn_decay_step_multiplier)
 BN_DECAY_CLIP = 0.99
 
 MODEL_STORAGE_PATH = os.path.join(output_dir, 'trained_models')
