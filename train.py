@@ -33,6 +33,11 @@ parser.add_argument('--seed', type=int, default=0,
                     help='Random seed for reproducible training [default: 0]')
 parser.add_argument('--jitter_sigma', type=float, default=0.02,
                     help='Gaussian jitter standard deviation [default: 0.02]')
+parser.add_argument('--disable_augment', action='store_true',
+                    help='Disable paper-style up-axis rotation and jitter')
+parser.add_argument('--train_sampling', choices=['random', 'head'], default='random',
+                    help='How to select NUM_POINT points from prepared HDF5 clouds '
+                         '[default: random per training epoch]')
 parser.add_argument('--max_train_batches', type=int, default=None,
                     help='Optional per-file training batch limit for smoke tests')
 parser.add_argument('--max_eval_batches', type=int, default=None,
@@ -94,7 +99,9 @@ if DECAY_STEP is None:
 
 BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
-BN_DECAY_DECAY_STEP = float(DECAY_STEP)
+# Match the public PointNet schedule: BN decay changes on a slower 40-epoch
+# time scale while the learning rate halves every 20 epochs.
+BN_DECAY_DECAY_STEP = float(DECAY_STEP * 2)
 BN_DECAY_CLIP = 0.99
 
 def log_string(out_str):
@@ -226,7 +233,8 @@ def train_one_epoch(sess, ops, train_writer):
     for fn in range(len(TRAIN_FILES)):
         log_string('----' + str(fn) + '-----')
         current_data, current_label = provider.loadDataFile(TRAIN_FILES[train_file_idxs[fn]])
-        current_data = current_data[:,0:NUM_POINT,:]
+        current_data = provider.sample_point_cloud(
+            current_data, NUM_POINT, random=(FLAGS.train_sampling == 'random'))
         current_data, current_label, _ = provider.shuffle_data(current_data, np.squeeze(current_label))            
         current_label = np.squeeze(current_label)
         
@@ -244,9 +252,14 @@ def train_one_epoch(sess, ops, train_writer):
             end_idx = (batch_idx+1) * BATCH_SIZE
             
             # Augment batched point clouds by rotation and jittering
-            rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
-            jittered_data = provider.jitter_point_cloud(rotated_data, sigma=FLAGS.jitter_sigma)
-            feed_dict = {ops['pointclouds_pl']: jittered_data,
+            batch_data = current_data[start_idx:end_idx, :, :]
+            if FLAGS.disable_augment:
+                augmented_data = batch_data
+            else:
+                rotated_data = provider.rotate_point_cloud(batch_data)
+                augmented_data = provider.jitter_point_cloud(
+                    rotated_data, sigma=FLAGS.jitter_sigma)
+            feed_dict = {ops['pointclouds_pl']: augmented_data,
                          ops['labels_pl']: current_label[start_idx:end_idx],
                          ops['is_training_pl']: is_training,}
             summary, step, _, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
@@ -274,7 +287,11 @@ def eval_one_epoch(sess, ops, test_writer):
     for fn in range(len(TEST_FILES)):
         log_string('----' + str(fn) + '-----')
         current_data, current_label = provider.loadDataFile(TEST_FILES[fn])
-        current_data = current_data[:,0:NUM_POINT,:]
+        # Evaluation uses the stable prefix of the prepared cloud.  Training
+        # performs fresh random subsampling; changing the test subset would
+        # add an avoidable source of metric variance.
+        current_data = provider.sample_point_cloud(current_data, NUM_POINT,
+                                                   random=False)
         current_label = np.squeeze(current_label)
         
         file_size = current_data.shape[0]

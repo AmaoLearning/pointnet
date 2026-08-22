@@ -30,6 +30,39 @@ def shuffle_data(data, labels):
     return data[idx, ...], labels[idx], idx
 
 
+def sample_point_cloud(batch_data, num_point, random=True):
+    """Select ``num_point`` points from each cloud.
+
+    The released ModelNet HDF5 files contain 2048 surface samples while the
+    PointNet classifier consumes 1024 points.  The paper samples the input
+    points from the surface rather than always taking a fixed prefix.  Using
+    a fresh, deterministic-under-seed subset for each training epoch avoids
+    systematically discarding the second half of every prepared cloud.
+    """
+    batch_data = np.asarray(batch_data)
+    if batch_data.ndim != 3:
+        raise ValueError('batch_data must have shape [B, N, C]')
+    batch_size, available_points, _ = batch_data.shape
+    if num_point > available_points:
+        raise ValueError('cannot sample %d points from %d available points' %
+                         (num_point, available_points))
+    if num_point == available_points:
+        return batch_data
+    if not random:
+        return batch_data[:, :num_point, :]
+
+    # Generate one independent permutation per shape.  The small ModelNet
+    # batches make this clearer and less error-prone than broadcasting a
+    # single index set across the batch.
+    sampled = np.empty((batch_size, num_point, batch_data.shape[2]),
+                       dtype=batch_data.dtype)
+    for batch_idx in range(batch_size):
+        point_idx = np.random.choice(available_points, num_point,
+                                     replace=False)
+        sampled[batch_idx] = batch_data[batch_idx, point_idx, :]
+    return sampled
+
+
 def rotate_point_cloud(batch_data):
     """ Randomly rotate the point clouds to augument the dataset
         rotation is per shape based along up direction

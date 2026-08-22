@@ -91,7 +91,9 @@ DECAY_RATE = 0.5
 
 BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
-BN_DECAY_DECAY_STEP = float(DECAY_STEP)
+# Match the public PointNet schedule: BN decay changes on a slower 40-epoch
+# time scale while the learning rate halves every 20 epochs.
+BN_DECAY_DECAY_STEP = float(DECAY_STEP * 2)
 BN_DECAY_CLIP = 0.99
 
 MODEL_STORAGE_PATH = os.path.join(output_dir, 'trained_models')
