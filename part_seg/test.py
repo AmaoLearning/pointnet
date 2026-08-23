@@ -235,10 +235,22 @@ def predict():
             seg_file_to_load = os.path.join(ply_data_dir, seg_files[shape_idx])
 
             pts, seg = load_pts_seg_files(pts_file_to_load, seg_file_to_load, objcats[cur_gt_label])
+            pts = pc_normalize(pts)
+            # Coordinates and labels must use the same indices when a raw PLY
+            # is downsampled to the 2048-point training protocol.
+            if pts.shape[0] > point_num:
+                if FLAGS.point_sampling != 'random':
+                    raise ValueError('PLY has %d points but point_num=%d; use '
+                                     '--point_sampling random to downsample' %
+                                     (pts.shape[0], point_num))
+                point_idx = np.random.choice(pts.shape[0], point_num,
+                                             replace=False)
+                pts = pts[point_idx, :]
+                seg = seg[point_idx]
             ori_point_num = len(seg)
 
             batch_data[0, ...] = pc_augment_to_point_num(
-                pc_normalize(pts), point_num, FLAGS.point_sampling)
+                pts, point_num, 'repeat')
 
             label_pred_val, seg_pred_res = sess.run([pred, seg_pred], feed_dict={
                         pointclouds_ph: batch_data,
