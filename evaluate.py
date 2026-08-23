@@ -30,7 +30,12 @@ parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
 parser.add_argument('--legacy_fc1_dropout', action='store_true',
                     help='Enable the historical extra dropout after the 512-D layer')
+parser.add_argument('--test_sampling', choices=['head', 'random'], default='head',
+                    help='How to select NUM_POINT points from test HDF5 clouds')
+parser.add_argument('--seed', type=int, default=0,
+                    help='Seed for random test sampling')
 FLAGS = parser.parse_args()
+np.random.seed(FLAGS.seed)
 
 
 BATCH_SIZE = FLAGS.batch_size
@@ -113,7 +118,8 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
     for fn in range(len(TEST_FILES)):
         log_string('----'+str(fn)+'----')
         current_data, current_label = provider.loadDataFile(TEST_FILES[fn])
-        current_data = current_data[:,0:NUM_POINT,:]
+        current_data = provider.sample_point_cloud(
+            current_data, NUM_POINT, random=(FLAGS.test_sampling == 'random'))
         current_label = np.squeeze(current_label)
         print(current_data.shape)
         
