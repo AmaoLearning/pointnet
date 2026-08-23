@@ -38,6 +38,8 @@ parser.add_argument('--disable_augment', action='store_true',
 parser.add_argument('--train_sampling', choices=['random', 'head'], default='random',
                     help='How to select NUM_POINT points from prepared HDF5 clouds '
                          '[default: random per training epoch]')
+parser.add_argument('--eval_sampling', choices=['random', 'head'], default='head',
+                    help='How to select NUM_POINT points for validation [default: head]')
 parser.add_argument('--legacy_fc1_dropout', action='store_true',
                     help='Enable the historical extra dropout after the 512-D layer')
 parser.add_argument('--bn_decay_step_multiplier', type=float, default=2.0,
@@ -172,6 +174,7 @@ def train():
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver(max_to_keep=None)
             best_saver = tf.train.Saver(max_to_keep=1)
+            best_class_saver = tf.train.Saver(max_to_keep=1)
             
         # Create a session
         config = tf.ConfigProto()
@@ -223,10 +226,16 @@ def train():
                 log_string("Model saved in file: %s" % epoch_path)
             if eval_accuracy > best_accuracy:
                 best_accuracy = eval_accuracy
-                best_class_accuracy = eval_class_accuracy
                 best_path = best_saver.save(sess, os.path.join(LOG_DIR, "best_model.ckpt"))
-                log_string("Best model saved in file: %s (accuracy=%f, class_accuracy=%f)" %
-                           (best_path, best_accuracy, best_class_accuracy))
+                log_string("Best overall model saved in file: %s (accuracy=%f, class_accuracy=%f)" %
+                           (best_path, best_accuracy, eval_class_accuracy))
+            if eval_class_accuracy > best_class_accuracy:
+                best_class_accuracy = eval_class_accuracy
+                best_class_path = best_class_saver.save(
+                    sess, os.path.join(LOG_DIR, "best_class_model.ckpt"))
+                log_string("Best mean-class model saved in file: %s "
+                           "(accuracy=%f, class_accuracy=%f)" %
+                           (best_class_path, eval_accuracy, best_class_accuracy))
 
 
 
@@ -295,11 +304,11 @@ def eval_one_epoch(sess, ops, test_writer):
     for fn in range(len(TEST_FILES)):
         log_string('----' + str(fn) + '-----')
         current_data, current_label = provider.loadDataFile(TEST_FILES[fn])
-        # Evaluation uses the stable prefix of the prepared cloud.  Training
-        # performs fresh random subsampling; changing the test subset would
-        # add an avoidable source of metric variance.
+        # Keep validation sampling explicit.  The paper/public protocol uses
+        # the prepared prefix, while random sampling is useful for a matched
+        # ablation against random training subsets.
         current_data = provider.sample_point_cloud(current_data, NUM_POINT,
-                                                   random=False)
+                                                   random=(FLAGS.eval_sampling == 'random'))
         current_label = np.squeeze(current_label)
         
         file_size = current_data.shape[0]

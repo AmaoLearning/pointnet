@@ -63,6 +63,17 @@ all_cats = json.load(open(os.path.join(hdf5_data_dir, 'overallid_to_catid_partid
 NUM_CATEGORIES = 16
 NUM_PART_CATS = len(all_cats)
 
+# Part ids are globally indexed in ShapeNetPart.  Build the valid-part set
+# for each object category so validation can compute the same category-masked
+# IoU used by part_seg/test.py and by the paper's reported metric.
+category_part_ids = [[] for _ in range(NUM_CATEGORIES)]
+category_to_index = {}
+for category_index, row in enumerate(all_obj_cats):
+    category_to_index[row[0]] = category_index
+for overall_part_id, (category_id, _part_id) in enumerate(all_cats):
+    if category_id in category_to_index:
+        category_part_ids[category_to_index[category_id]].append(overall_part_id)
+
 print('#### Batch Size: {0}'.format(batch_size))
 print('#### Point Number: {0}'.format(point_num))
 print('#### Training using GPU: {0}'.format(FLAGS.gpu))
@@ -326,10 +337,12 @@ def train():
             total_seg_loss = 0.0
             total_label_acc = 0.0
             total_seg_acc = 0.0
+            total_seg_iou = 0.0
             total_seen = 0
 
             total_label_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
             total_seg_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
+            total_seg_iou_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
             total_seen_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.int32)
 
             for i in range(num_test_file):
@@ -370,7 +383,17 @@ def train():
                             per_instance_seg_loss, labels_pred, seg_pred, per_instance_seg_pred_res], \
                             feed_dict=feed_dict)
 
-                    per_instance_part_acc = np.mean(pred_seg_res[:cur_batch_size] == cur_seg[begidx: endidx, ...], axis=1)
+                    # Mask logits for parts that do not belong to the known
+                    # object category before taking argmax, matching the
+                    # standalone PLY evaluator.
+                    masked_pred = np.array(seg_pred_val[:cur_batch_size], copy=True)
+                    for local_idx in range(cur_batch_size):
+                        valid_parts = category_part_ids[int(cur_labels[begidx + local_idx])]
+                        invalid_parts = list(set(range(NUM_PART_CATS)) - set(valid_parts))
+                        if invalid_parts:
+                            masked_pred[local_idx, :, invalid_parts] = np.min(masked_pred[local_idx]) - 1000
+                    masked_pred_res = np.argmax(masked_pred, axis=2)
+                    per_instance_part_acc = np.mean(masked_pred_res == cur_seg[begidx: endidx, ...], axis=1)
 
                     total_seen += cur_batch_size
                     total_loss += loss_val * cur_batch_size
@@ -380,6 +403,22 @@ def train():
                     per_instance_label_pred = np.argmax(label_pred_val[:cur_batch_size], axis=1)
                     total_label_acc += np.sum(np.float32(per_instance_label_pred == cur_labels[begidx: endidx, ...]))
                     total_seg_acc += np.sum(per_instance_part_acc)
+
+                    for local_idx in range(cur_batch_size):
+                        category_index = int(cur_labels[begidx + local_idx])
+                        gt = cur_seg[begidx + local_idx]
+                        pred = masked_pred_res[local_idx]
+                        shape_iou = 0.0
+                        valid_parts = category_part_ids[category_index]
+                        for part_id in valid_parts:
+                            pred_mask = (pred == part_id)
+                            gt_mask = (gt == part_id)
+                            union = np.sum(pred_mask | gt_mask)
+                            shape_iou += (1.0 if union == 0 else
+                                          np.sum(pred_mask & gt_mask) / float(union))
+                        shape_iou /= float(len(valid_parts))
+                        total_seg_iou += shape_iou
+                        total_seg_iou_per_cat[category_index] += shape_iou
 
                     for shape_idx in range(begidx, endidx):
                         total_seen_per_cat[cur_labels[shape_idx]] += 1
@@ -391,6 +430,11 @@ def train():
             total_seg_loss = total_seg_loss * 1.0 / total_seen
             total_label_acc = total_label_acc * 1.0 / total_seen
             total_seg_acc = total_seg_acc * 1.0 / total_seen
+            total_seg_iou = total_seg_iou * 1.0 / total_seen
+            category_iou_values = [total_seg_iou_per_cat[i] / total_seen_per_cat[i]
+                                   for i in range(NUM_CATEGORIES)
+                                   if total_seen_per_cat[i] > 0]
+            category_mean_iou = float(np.mean(category_iou_values))
 
             test_loss_sum, test_label_acc_sum, test_label_loss_sum, test_seg_loss_sum, test_seg_acc_sum = sess.run(\
                     [total_test_loss_sum_op, label_test_acc_sum_op, label_test_loss_sum_op, seg_test_loss_sum_op, seg_test_acc_sum_op], \
@@ -408,6 +452,8 @@ def train():
             printout(flog, '\t\tTesting Label Accuracy: %f' % total_label_acc)
             printout(flog, '\t\tTesting Seg Mean_loss: %f' % total_seg_loss)
             printout(flog, '\t\tTesting Seg Accuracy: %f' % total_seg_acc)
+            printout(flog, '\t\tTesting Seg Instance IoU: %f' % total_seg_iou)
+            printout(flog, '\t\tTesting Seg Category Mean IoU: %f' % category_mean_iou)
 
             for cat_idx in range(NUM_CATEGORIES):
                 if total_seen_per_cat[cat_idx] > 0:
@@ -415,12 +461,16 @@ def train():
                     printout(flog, '\t\tCategory %s Label Accuracy: %f' % (all_obj_cats[cat_idx][0], total_label_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
                     printout(flog, '\t\tCategory %s Seg Accuracy: %f' % (all_obj_cats[cat_idx][0], total_seg_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
 
-            return float(total_seg_acc)
+            return float(total_seg_acc), float(total_seg_iou), category_mean_iou
 
         if not os.path.exists(MODEL_STORAGE_PATH):
             os.mkdir(MODEL_STORAGE_PATH)
 
         best_seg_accuracy = -1.0
+        best_seg_iou = -1.0
+        best_category_iou = -1.0
+        best_iou_saver = tf.train.Saver(max_to_keep=1)
+        best_category_iou_saver = tf.train.Saver(max_to_keep=1)
         for epoch in range(TRAINING_EPOCHES):
             printout(flog, '\n>>> Training for the epoch %d/%d ...' % (epoch, TRAINING_EPOCHES))
 
@@ -429,7 +479,7 @@ def train():
 
             train_one_epoch(train_file_idx, epoch)
             printout(flog, '\n<<< Testing on the validation dataset ...')
-            seg_accuracy = eval_one_epoch(epoch)
+            seg_accuracy, seg_iou, category_iou = eval_one_epoch(epoch)
 
             latest_filename = saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'latest.ckpt'))
             if (epoch+1) % 10 == 0 or epoch == TRAINING_EPOCHES - 1:
@@ -440,6 +490,20 @@ def train():
                 best_filename = best_saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'best.ckpt'))
                 printout(flog, 'Successfully store the best checkpoint model into %s (seg_accuracy=%f)' %
                          (best_filename, best_seg_accuracy))
+            if seg_iou > best_seg_iou:
+                best_seg_iou = seg_iou
+                best_iou_filename = best_iou_saver.save(
+                    sess, os.path.join(MODEL_STORAGE_PATH, 'best_iou.ckpt'))
+                printout(flog, 'Successfully store the best instance-IoU checkpoint model into %s '
+                         '(instance_iou=%f, category_iou=%f)' %
+                         (best_iou_filename, best_seg_iou, category_iou))
+            if category_iou > best_category_iou:
+                best_category_iou = category_iou
+                best_category_filename = best_category_iou_saver.save(
+                    sess, os.path.join(MODEL_STORAGE_PATH, 'best_category_iou.ckpt'))
+                printout(flog, 'Successfully store the best category-IoU checkpoint model into %s '
+                         '(instance_iou=%f, category_iou=%f)' %
+                         (best_category_filename, seg_iou, best_category_iou))
 
             flog.flush()
 
