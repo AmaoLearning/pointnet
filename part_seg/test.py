@@ -19,6 +19,10 @@ parser.add_argument('--output_verbose', action='store_true',
                     help='Write per-shape OBJ visualizations and logs')
 parser.add_argument('--point_num', type=int, default=3000,
                     help='Number of points fed to the network [default: 3000]')
+parser.add_argument('--point_sampling', choices=['repeat', 'random'], default='repeat',
+                    help='How to fit raw PLY point counts to point_num')
+parser.add_argument('--seed', type=int, default=0,
+                    help='Seed for deterministic PLY downsampling')
 parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
 FLAGS = parser.parse_args()
@@ -26,6 +30,7 @@ if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
 if FLAGS.point_num <= 0:
     parser.error('--point_num must be positive')
+np.random.seed(FLAGS.seed)
 
 
 # DEFAULT SETTINGS
@@ -142,8 +147,14 @@ def load_pts_seg_files(pts_file, seg_file, catid):
         seg = np.array([cpid2oid[catid+'_'+str(int(x) - offset)] for x in part_ids], dtype=np.int32)
     return pts, seg
 
-def pc_augment_to_point_num(pts, pn):
-    assert(pts.shape[0] <= pn)
+def pc_augment_to_point_num(pts, pn, sampling='repeat'):
+    if pts.shape[0] > pn:
+        if sampling != 'random':
+            raise ValueError('PLY has %d points but point_num=%d; use '
+                             '--point_sampling random to downsample' %
+                             (pts.shape[0], pn))
+        point_idx = np.random.choice(pts.shape[0], pn, replace=False)
+        return pts[point_idx, :]
     cur_len = pts.shape[0]
     res = np.array(pts)
     while cur_len < pn:
@@ -226,7 +237,8 @@ def predict():
             pts, seg = load_pts_seg_files(pts_file_to_load, seg_file_to_load, objcats[cur_gt_label])
             ori_point_num = len(seg)
 
-            batch_data[0, ...] = pc_augment_to_point_num(pc_normalize(pts), point_num)
+            batch_data[0, ...] = pc_augment_to_point_num(
+                pc_normalize(pts), point_num, FLAGS.point_sampling)
 
             label_pred_val, seg_pred_res = sess.run([pred, seg_pred], feed_dict={
                         pointclouds_ph: batch_data,
