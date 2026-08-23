@@ -17,11 +17,15 @@ parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: 0]'
 parser.add_argument('--output_dir', default='test_results', help='Evaluation output directory')
 parser.add_argument('--output_verbose', action='store_true',
                     help='Write per-shape OBJ visualizations and logs')
+parser.add_argument('--point_num', type=int, default=3000,
+                    help='Number of points fed to the network [default: 3000]')
 parser.add_argument('--gpu_memory_fraction', type=float, default=0.10,
                     help='Maximum fraction of one GPU memory to reserve [default: 0.10]')
 FLAGS = parser.parse_args()
 if not 0.0 < FLAGS.gpu_memory_fraction <= 1.0:
     parser.error('--gpu_memory_fraction must be in (0, 1]')
+if FLAGS.point_num <= 0:
+    parser.error('--point_num must be positive')
 
 
 # DEFAULT SETTINGS
@@ -33,7 +37,7 @@ output_dir = os.path.join(BASE_DIR, FLAGS.output_dir)
 output_verbose = FLAGS.output_verbose
 
 # MAIN SCRIPT
-point_num = 3000            # the max number of points in the all testing data shapes
+point_num = FLAGS.point_num
 batch_size = 1
 
 test_file_list = os.path.join(BASE_DIR, 'testing_ply_file_list.txt')
